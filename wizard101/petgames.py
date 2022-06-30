@@ -1,5 +1,4 @@
 from wizard101 import util
-import mss, cv2
 import time, keyboard
 
 class DanceGameSolver:
@@ -85,5 +84,3 @@ class DanceGameSolver:
         if t <= 0.01 and k != self.state:
             self.printed_not_found = False
             self.change_state(k)
-        
-        
