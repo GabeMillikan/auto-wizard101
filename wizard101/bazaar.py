@@ -5,6 +5,7 @@ import PIL.Image, PIL.ImageFont, PIL.ImageDraw
 import pytesseract
 from thefuzz import fuzz
 import re
+from threading import Thread
 
 class AutoBuyer:
     def __init__(self, search):
@@ -78,7 +79,7 @@ class AutoBuyer:
         candidates = [re.sub(r"[^a-z]", "", "".join(c.split()).lower()) for c in candidates]
         candidates = [c for c in candidates if c]
         if not candidates:
-            output[i] = {
+            output[index] = {
                 "score": 0,
                 "best_candidate": "unknown",
             }
@@ -86,7 +87,8 @@ class AutoBuyer:
         
         score, best_candidate = max((self.rate_similarity(candidate, self.search), candidate) for candidate in candidates)
         
-        output[i] = {
+        print(f"recognized {best_candidate!r} which is a {score:.0f}% match")
+        output[index] = {
             "score": score,
             "best_candidate": best_candidate,
         }
@@ -139,39 +141,29 @@ class AutoBuyer:
             )
             name_list_image = cv2.bitwise_and(name_list_image, name_list_image, mask=name_list_threshold)
             
-            found = None
+            found_items = {}
+            threads = []
             for i in range(10):
                 y = i * 27
                 text_image = name_list_image[y+3:y+22, :]
-                text_image = cv2.copyMakeBorder(
-                    text_image,
-                    top=5,
-                    bottom=5,
-                    left=5,
-                    right=5,
-                    borderType=cv2.BORDER_CONSTANT,
-                    value=(0, 0, 0, 0)
+                t = Thread(
+                    target=self.threaded_determine_candidate,
+                    args=(i, text_image, found_items)
                 )
-                candidates = []
-                
-                candidates.append(pytesseract.image_to_string(text_image))
-                text_image = cv2.erode(text_image, np.ones((1, 1), 'uint8'))
-                candidates.append(pytesseract.image_to_string(text_image))
-                
-                candidates = [re.sub(r"[^a-z]", "", "".join(c.split()).lower()) for c in candidates]
-                candidates = [c for c in candidates if c]
-                if not candidates:
-                    continue
-                
-                score, best_candidate = max((self.rate_similarity(candidate, self.search), candidate) for candidate in candidates)
-                print(f"recognized {best_candidate!r} which is a {score:.0f}% match")
-                if score > 70:
-                    found = i
-                    break
+                t.start()
+                threads.append(t)
             
-            if found is not None:
+            for t in threads:
+                t.join()
+            
+            best_score, best_index = None, None
+            for i, item in found_items.items():
+                if best_score is None or item["score"] > best_score:
+                    best_score, best_index = item["score"], i
+            
+            if best_score > 70:
                 self.change_state("Found it! Puchasing...")
-                self.da.click(store_x + 371, store_y + 170 + int(27 * (i + 0.5)))
+                self.da.click(store_x + 371, store_y + 170 + int(27 * (best_index + 0.5)))
                 self.da.click(store_x + 195, store_y + 495)
                 self.da.drag(
                     store_x + 359, store_y + 349,
@@ -179,8 +171,9 @@ class AutoBuyer:
                 )
                 self.da.click(store_x + 270, store_y + 480)
                 
-                ok_x, ok_y, ok_diff = 0, 0, 0
-                while ok_diff < 0.01:
+                ok_x, ok_y, ok_diff = 0, 0, 1
+                while ok_diff > 0.05:
+                    print(ok_x, ok_y, ok_diff)
                     time.sleep(0.5)
                     store_image = self.da.grab(*store_rect)
                     ok_x, ok_y, ok_diff = self.da.find_in_image(store_image, self.templates["ok"])
