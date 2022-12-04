@@ -189,6 +189,6 @@ def load_item_page_sources(log_file: typing.IO = sys.stdout):
     for url, category in get_all_item_urls(use_cache=True):
         try:
             get_item_page_source(url)
-            print(f"[{category}, {url}] DONE", file=log_file)
+            print(f"[{category}, {url}] DONE", file=log_file, flush=True)
         except Exception as e:
-            print(f"[{category}, {url}] FAILED - {e!r} - {driver().page_source!r}", file=log_file)
+            print(f"[{category}, {url}] FAILED - {e!r} - {driver().page_source!r}", file=log_file, flush=True)
