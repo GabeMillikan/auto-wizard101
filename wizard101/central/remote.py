@@ -2,6 +2,8 @@ import time
 import typing
 import re
 from functools import cache
+import sys
+
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -13,10 +15,14 @@ API_ROOT = "https://www.wizard101central.com"
 
 
 @cache
-def driver() -> webdriver.Chrome:
-    options = webdriver.ChromeOptions()
+def driver() -> webdriver.Firefox:
+    options = webdriver.FirefoxOptions()
     options.set_capability("pageLoadStrategy", "eager")
-    return webdriver.Chrome(options=options)
+
+    options.profile = webdriver.FirefoxProfile()
+    options.profile.set_preference("network.cookie.cookieBehavior", 2)
+
+    return webdriver.Firefox(options=options)
 
 
 T = typing.TypeVar("T")
@@ -54,7 +60,6 @@ def driver_close_extra_tabs():
 
 
 def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
-    driver().delete_all_cookies()
     driver().get(url)
 
     section_element = wait_for(10, driver().find_element, By.ID, "mw-pages")
@@ -165,7 +170,6 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
     elif cached_page_source is not None and use_cache is not False:
         return cached_page_source
 
-    driver().delete_all_cookies()
     driver().get(url)
 
     wait_for(
@@ -176,14 +180,15 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
     page_source = driver().page_source
 
     models.database.execute("UPDATE raw_item_data SET page_source = ? WHERE url = ?", (page_source, url))
+    models.database.commit()
 
     return page_source
 
 
-for url, category in get_all_item_urls(use_cache=True):
-    with open("download-log.txt", "a") as log_file:
+def load_item_page_sources(log_file: typing.IO = sys.stdout):
+    for url, category in get_all_item_urls(use_cache=True):
         try:
-            get_item_page_source(url, use_cache=False)
-            print(f"[{category}, {url}] DONE - {driver().find_element(By.ID, 'firstHeading').text}", file=log_file)
+            get_item_page_source(url)
+            print(f"[{category}, {url}] DONE", file=log_file)
         except Exception as e:
             print(f"[{category}, {url}] FAILED - {e!r} - {driver().page_source!r}", file=log_file)

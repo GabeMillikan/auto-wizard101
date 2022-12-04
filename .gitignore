@@ -115,3 +115,5 @@ dmypy.json
 
 #private
 __private__/*
+
+download-log.txt

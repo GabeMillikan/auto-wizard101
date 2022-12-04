@@ -118,3 +118,4 @@ database.executescript(
     CREATE INDEX IF NOT EXISTS raw_item_data_category_index ON raw_item_data (category);
     """
 )
+database.commit()
