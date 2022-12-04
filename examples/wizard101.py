@@ -9,9 +9,14 @@ import sys, pathlib, importlib.util
 
 examples_folder = pathlib.Path(__file__).parent
 repository_folder = examples_folder.parent
-library_entry_point = repository_folder / 'wizard101' / '__init__.py'
+library_entry_point = repository_folder / "wizard101" / "__init__.py"
 
-wizard101_spec = importlib.util.spec_from_file_location('wizard101', str(library_entry_point.absolute()))
+wizard101_spec = importlib.util.spec_from_file_location("wizard101", str(library_entry_point.absolute()))
+assert wizard101_spec is not None
+
+wizard101_loader = wizard101_spec.loader
+assert wizard101_loader is not None
+
 wizard101 = importlib.util.module_from_spec(wizard101_spec)
-sys.modules['wizard101'] = wizard101
-wizard101_spec.loader.exec_module(wizard101)
+sys.modules["wizard101"] = wizard101
+wizard101_loader.exec_module(wizard101)
