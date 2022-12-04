@@ -102,7 +102,7 @@ class Item(DatabasePersistable):
     category: str
     stats: Stats
 
-    CATEGORIES = "Hats", "Robes", "Boots", "Athames", "Amulets", "Rings", "Decks", "Mounts"
+    CATEGORIES = "Hats", "Robes", "Boots", "Athames", "Amulets", "Rings", "Decks", "Mounts", "Jewels"
 
 
 database = util.database_resource("central.sqlite")
@@ -114,6 +114,6 @@ database.executescript(
         category TEXT NOT NULL
     ) WITHOUT ROWID;
 
-    CREATE INDEX cached_item_url_category_index ON cached_item_url (category);
+    CREATE INDEX IF NOT EXISTS cached_item_url_category_index ON cached_item_url (category);
     """
 )
