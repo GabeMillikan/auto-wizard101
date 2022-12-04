@@ -41,9 +41,10 @@ def wait_for(timeout: float, func: typing.Callable[P, T], *args: P.args, **kwarg
             time.sleep(timeout / 100)
 
 
-def page_loaded():
+def page_must_be_loaded():
     ready_state = driver().execute_script("return document.readyState;")
-    return ready_state == "complete"
+    if ready_state != "complete":
+        raise Exception(f"Page is not loaded. document.readyState = {ready_state!r}")
 
 
 def driver_close_extra_tabs():
@@ -137,11 +138,13 @@ def get_all_category_item_urls(
 
 
 def get_all_item_urls(**options) -> list[tuple[str, str]]:
-    return [
-        (url, category)
-        for category in models.Item.CATEGORIES
-        for url in get_all_category_item_urls(category, **options)
-    ]
+    return sorted(
+        [
+            (url, category)
+            for category in models.Item.CATEGORIES
+            for url in get_all_category_item_urls(category, **options)
+        ]
+    )
 
 
 def get_item_page_source_cached(url: str) -> str | None:
@@ -165,7 +168,10 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
     driver().delete_all_cookies()
     driver().get(url)
 
-    wait_for(load_timeout, page_loaded)
+    wait_for(
+        load_timeout,
+        lambda: (page_must_be_loaded(), driver().find_element(By.CSS_SELECTOR, "div#content > h1#firstHeading")),
+    )
 
     page_source = driver().page_source
 
@@ -174,7 +180,10 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
     return page_source
 
 
-for url, category in get_all_item_urls():
-    src = get_item_page_source(url)
-
-    print("Title:", driver().find_element(By.ID, "firstHeading").text)
+for url, category in get_all_item_urls(use_cache=True):
+    with open("download-log.txt", "a") as log_file:
+        try:
+            get_item_page_source(url, use_cache=False)
+            print(f"[{category}, {url}] DONE - {driver().find_element(By.ID, 'firstHeading').text}", file=log_file)
+        except Exception as e:
+            print(f"[{category}, {url}] FAILED - {e!r} - {driver().page_source!r}", file=log_file)
