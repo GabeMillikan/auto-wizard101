@@ -109,11 +109,12 @@ database = util.database_resource("central.sqlite")
 
 database.executescript(
     """
-    CREATE TABLE IF NOT EXISTS cached_item_url (
+    CREATE TABLE IF NOT EXISTS raw_item_data (
         url TEXT PRIMARY KEY,
-        category TEXT NOT NULL
+        category TEXT NOT NULL,
+        page_source TEXT DEFAULT NULL
     ) WITHOUT ROWID;
 
-    CREATE INDEX IF NOT EXISTS cached_item_url_category_index ON cached_item_url (category);
+    CREATE INDEX IF NOT EXISTS raw_item_data_category_index ON raw_item_data (category);
     """
 )

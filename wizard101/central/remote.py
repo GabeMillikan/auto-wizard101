@@ -14,7 +14,9 @@ API_ROOT = "https://www.wizard101central.com"
 
 @cache
 def driver() -> webdriver.Chrome:
-    return webdriver.Chrome()
+    options = webdriver.ChromeOptions()
+    options.set_capability("pageLoadStrategy", "eager")
+    return webdriver.Chrome(options=options)
 
 
 T = typing.TypeVar("T")
@@ -27,16 +29,31 @@ def wait_for(timeout: float, func: typing.Callable[P, T], *args: P.args, **kwarg
     If the duration is exhausted, the function will be called one last time and any errors will be propagated.
     """
     start = time.time()
-    while time.time() - start < timeout:
+    while True:
         try:
             return func(*args, **kwargs)
-        except:
+        except Exception as e:
+            if time.time() - start >= timeout:
+                raise TimeoutError(
+                    f"`{func!r}(*{args!r}, **{kwargs!r})` did not succeed within {timeout} seconds"
+                ) from e
+
             time.sleep(timeout / 100)
 
-    return func(*args, **kwargs)
+
+def page_loaded():
+    ready_state = driver().execute_script("return document.readyState;")
+    return ready_state == "complete"
+
+
+def driver_close_extra_tabs():
+    for window_handle in driver().window_handles[1:]:
+        driver().switch_to.window(window_handle)
+        driver().close()
 
 
 def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
+    driver().delete_all_cookies()
     driver().get(url)
 
     section_element = wait_for(10, driver().find_element, By.ID, "mw-pages")
@@ -62,30 +79,39 @@ def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
 
 
 def get_all_category_item_urls_cached(category: str) -> list[str]:
-    cursor = models.database.execute("SELECT url FROM cached_item_url WHERE category = ?", (category,))
+    cursor = models.database.execute("SELECT url FROM raw_item_data WHERE category = ?", (category,))
     return [url for url, in cursor.fetchall()]
 
 
-def get_all_category_item_urls(category: str, print_progress: bool = True) -> list[str]:
+def get_all_category_item_urls(
+    category: str, use_cache: bool | None = None, print_progress: bool | None = None
+) -> list[str]:
+    if print_progress is None:
+        print_progress = use_cache is not True
+
     cached_item_urls = get_all_category_item_urls_cached(category)
+    if use_cache is True:
+        if print_progress:
+            print(f"Using cached items in {category!r}. Skipping validations.")
+        return cached_item_urls
+
     item_urls = []
     url = f"{API_ROOT}/wiki/Category:{category}"
 
     if print_progress:
         print(f"Fetching item urls for {category!r}...")
 
-    if cached_item_urls:
+    if cached_item_urls and use_cache is not False:
         print(
             f"There are already {len(cached_item_urls)} urls cached in the database. Checking if that is still up to date..."
         )
 
-    first_run = True
+    first_page = True
     while url:
-        driver().delete_all_cookies()
         section_item_urls, total_items_in_category, url = get_single_category_page(url)
         item_urls += section_item_urls
 
-        if first_run:
+        if first_page and use_cache is not False:
             if total_items_in_category == len(cached_item_urls):
                 print(f"It is! Skipping further fetches and pulling from the database instead.")
                 return cached_item_urls
@@ -93,23 +119,62 @@ def get_all_category_item_urls(category: str, print_progress: bool = True) -> li
                 print(
                     f"It is not. There are {total_items_in_category} total urls available. Clearing cache and reloading..."
                 )
-            first_run = False
+        first_page = False
 
         duplicate_count = len(item_urls) - len(set(item_urls))
         duplicates = "" if duplicate_count == 0 else f"(found {duplicate_count} duplicate(s))"
         print(f"Fetched {len(item_urls)} / {total_items_in_category} {duplicates}".strip())
 
-    models.database.execute("DELETE FROM cached_item_url WHERE category = ?", (category,))
+    models.database.execute("DELETE FROM raw_item_data WHERE category = ?", (category,))
 
     cursor = models.database.cursor()
     for item_url in item_urls:
-        cursor.execute("INSERT INTO cached_item_url (url, category) VALUES (?, ?)", (item_url, category))
+        cursor.execute("INSERT INTO raw_item_data (url, category) VALUES (?, ?)", (item_url, category))
     models.database.commit()
     print(f"Cached {len(item_urls)} urls for later reuse")
 
     return item_urls
 
 
-for category in models.Item.CATEGORIES:
-    item_urls = get_all_category_item_urls(category)
-    print(f"Found {len(item_urls)} URLs in the {category!r} category")
+def get_all_item_urls(**options) -> list[tuple[str, str]]:
+    return [
+        (url, category)
+        for category in models.Item.CATEGORIES
+        for url in get_all_category_item_urls(category, **options)
+    ]
+
+
+def get_item_page_source_cached(url: str) -> str | None:
+    cursor = models.database.execute("SELECT page_source FROM raw_item_data WHERE url = ?", (url,))
+    row = cursor.fetchone()
+    if row:
+        (page_source,) = row
+        return page_source
+
+    return None
+
+
+def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: float = 10) -> str | None:
+    cached_page_source = get_item_page_source_cached(url)
+
+    if use_cache is True:
+        return cached_page_source
+    elif cached_page_source is not None and use_cache is not False:
+        return cached_page_source
+
+    driver().delete_all_cookies()
+    driver().get(url)
+
+    wait_for(load_timeout, page_loaded)
+
+    page_source = driver().page_source
+
+    models.database.execute("UPDATE raw_item_data SET page_source = ? WHERE url = ?", (page_source, url))
+
+    return page_source
+
+
+for url, category in get_all_item_urls():
+    src = get_item_page_source(url)
+
+    print("Title:", driver().find_element(By.ID, "firstHeading").text)
