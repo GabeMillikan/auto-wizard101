@@ -4,6 +4,7 @@ import pathlib
 from PIL import ImageFont
 import mouse
 import time
+import sqlite3
 
 file_root = pathlib.Path(__file__).parent
 
@@ -90,3 +91,8 @@ def img_resource(name: str) -> np.ndarray:
 def font_resource(name: str, size: int) -> ImageFont.FreeTypeFont:
     fpath = str(file_root / "resource" / name)
     return ImageFont.truetype(fpath, size)
+
+
+def database_resource(name: str) -> sqlite3.Connection:
+    fpath = str(file_root / "resource" / name)
+    return sqlite3.connect(fpath)
