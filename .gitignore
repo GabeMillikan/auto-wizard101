@@ -116,5 +116,4 @@ dmypy.json
 #private
 __private__/*
 
-download-log.txt
 wizard101/resource/central.sqlite

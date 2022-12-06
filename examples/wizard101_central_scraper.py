@@ -1,6 +1,6 @@
 from wizard101.central import remote
 
-
-with open("download-log.txt", "a") as log_file:
-    for retry in range(5):
-        remote.load_item_page_sources(log_file)
+# pull data from wizard101central
+# This will take a *long* time on the first run, but will be much faster on subsequent runs.
+# You can omit this check if you believe your cached database is up-to-date.
+remote.refresh_item_index()

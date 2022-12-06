@@ -4,10 +4,9 @@ import re
 from functools import cache
 import sys
 
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.remote.webelement import WebElement
+import undetected_chromedriver as uc
 
 from . import models
 
@@ -15,24 +14,24 @@ API_ROOT = "https://www.wizard101central.com"
 
 
 @cache
-def driver() -> webdriver.Firefox:
-    options = webdriver.FirefoxOptions()
-    options.set_capability("pageLoadStrategy", "eager")
-
-    options.profile = webdriver.FirefoxProfile()
-    options.profile.set_preference("network.cookie.cookieBehavior", 2)
-
-    return webdriver.Firefox(options=options)
+def driver() -> webdriver.Chrome:
+    return uc.Chrome()
 
 
 T = typing.TypeVar("T")
 P = typing.ParamSpec("P")
 
 
+def resolve_print_progress(use_cache: bool | None = None, print_progress: bool | None = None) -> bool:
+    if print_progress is None:
+        return use_cache is not True
+    return print_progress
+
+
 def wait_for(timeout: float, func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     """
     Repeatedly calls the function until it doesn't error.
-    If the duration is exhausted, the function will be called one last time and any errors will be propagated.
+    If the duration is exhausted, the a TimeoutError will be raised from the function's error.
     """
     start = time.time()
     while True:
@@ -45,18 +44,6 @@ def wait_for(timeout: float, func: typing.Callable[P, T], *args: P.args, **kwarg
                 ) from e
 
             time.sleep(timeout / 100)
-
-
-def page_must_be_loaded():
-    ready_state = driver().execute_script("return document.readyState;")
-    if ready_state != "complete":
-        raise Exception(f"Page is not loaded. document.readyState = {ready_state!r}")
-
-
-def driver_close_extra_tabs():
-    for window_handle in driver().window_handles[1:]:
-        driver().switch_to.window(window_handle)
-        driver().close()
 
 
 def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
@@ -92,8 +79,7 @@ def get_all_category_item_urls_cached(category: str) -> list[str]:
 def get_all_category_item_urls(
     category: str, use_cache: bool | None = None, print_progress: bool | None = None
 ) -> list[str]:
-    if print_progress is None:
-        print_progress = use_cache is not True
+    print_progress = resolve_print_progress(use_cache, print_progress)
 
     cached_item_urls = get_all_category_item_urls_cached(category)
     if use_cache is True:
@@ -107,10 +93,10 @@ def get_all_category_item_urls(
     if print_progress:
         print(f"Fetching item urls for {category!r}...")
 
-    if cached_item_urls and use_cache is not False:
-        print(
-            f"There are already {len(cached_item_urls)} urls cached in the database. Checking if that is still up to date..."
-        )
+        if cached_item_urls and use_cache is not False:
+            print(
+                f"There are already {len(cached_item_urls)} urls cached in the database. Checking if that is still up to date..."
+            )
 
     first_page = True
     while url:
@@ -119,25 +105,33 @@ def get_all_category_item_urls(
 
         if first_page and use_cache is not False:
             if total_items_in_category == len(cached_item_urls):
-                print(f"It is! Skipping further fetches and pulling from the database instead.")
+                if print_progress:
+                    print(f"It is! Skipping further fetches and pulling from the database instead.")
                 return cached_item_urls
-            elif cached_item_urls:
-                print(
-                    f"It is not. There are {total_items_in_category} total urls available. Clearing cache and reloading..."
-                )
+            elif cached_item_urls and print_progress:
+                print(f"It is not. There are {total_items_in_category} total urls available. Updating index...")
         first_page = False
 
         duplicate_count = len(item_urls) - len(set(item_urls))
         duplicates = "" if duplicate_count == 0 else f"(found {duplicate_count} duplicate(s))"
-        print(f"Fetched {len(item_urls)} / {total_items_in_category} {duplicates}".strip())
 
-    models.database.execute("DELETE FROM raw_item_data WHERE category = ?", (category,))
+        if print_progress:
+            print(f"Fetched {len(item_urls)} / {total_items_in_category} {duplicates}".strip())
 
     cursor = models.database.cursor()
+
+    cursor.execute(
+        f"DELETE FROM raw_item_data WHERE category = ? AND url NOT IN ({', '.join(['?'] * len(item_urls))})",
+        (category, *item_urls),
+    )
+
     for item_url in item_urls:
-        cursor.execute("INSERT INTO raw_item_data (url, category) VALUES (?, ?)", (item_url, category))
+        cursor.execute("INSERT OR IGNORE INTO raw_item_data (url, category) VALUES (?, ?)", (item_url, category))
+
     models.database.commit()
-    print(f"Cached {len(item_urls)} urls for later reuse")
+
+    if print_progress:
+        print(f"Cached {len(item_urls)} urls for later reuse")
 
     return item_urls
 
@@ -174,7 +168,7 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
 
     wait_for(
         load_timeout,
-        lambda: (page_must_be_loaded(), driver().find_element(By.CSS_SELECTOR, "div#content > h1#firstHeading")),
+        lambda: driver().find_element(By.CSS_SELECTOR, "div#content > h1#firstHeading"),
     )
 
     page_source = driver().page_source
@@ -185,10 +179,27 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
     return page_source
 
 
-def load_item_page_sources(log_file: typing.IO = sys.stdout):
-    for url, category in get_all_item_urls(use_cache=True):
+def get_item_page_sources(
+    log_file: typing.IO = sys.stdout, use_cache: bool | None = None, print_progress: bool | None = None
+) -> typing.Generator[tuple[str, str | None], None, None]:
+    print_progress = resolve_print_progress(use_cache, print_progress)
+    item_urls = get_all_item_urls(use_cache=use_cache, print_progress=print_progress)
+
+    for i, (url, category) in enumerate(item_urls):
         try:
-            get_item_page_source(url)
-            print(f"[{category}, {url}] DONE", file=log_file, flush=True)
+            if print_progress:
+                print(f"({i+1}/{len(item_urls)}) [{category}, {url}] FETCHED", file=log_file, flush=True)
+
+            yield url, get_item_page_source(url, use_cache=use_cache)
         except Exception as e:
-            print(f"[{category}, {url}] FAILED - {e!r} - {driver().page_source!r}", file=log_file, flush=True)
+            if print_progress:
+                print(
+                    f"({i+1}/{len(item_urls)}) [{category}, {url}] FAILED - {e!r}",
+                    file=log_file,
+                    flush=True,
+                )
+
+
+def refresh_item_index(print_progress: bool = True):
+    for _ in get_item_page_sources(print_progress=print_progress):
+        pass
