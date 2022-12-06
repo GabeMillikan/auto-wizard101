@@ -117,3 +117,4 @@ dmypy.json
 __private__/*
 
 download-log.txt
+wizard101/resource/central.sqlite
