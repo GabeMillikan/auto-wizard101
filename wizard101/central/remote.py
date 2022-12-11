@@ -8,7 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 import undetected_chromedriver as uc
 
-from . import models
+from . import database
 
 API_ROOT = "https://www.wizard101central.com"
 
@@ -72,7 +72,7 @@ def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
 
 
 def get_all_category_item_urls_cached(category: str) -> list[str]:
-    return [data.page_url for data in models.RawSiteData.where(category=category)]
+    return [data.page_url for data in database.RawSiteData.where(category=category)]
 
 
 def get_all_category_item_urls(
@@ -117,15 +117,15 @@ def get_all_category_item_urls(
         if print_progress:
             print(f"Fetched {len(item_urls)} / {total_items_in_category} {duplicates}".strip())
 
-    with models.cursor() as cursor:
+    with database.cursor() as cursor:
         cursor.execute(
-            f"DELETE FROM {models.RawSiteData.table_name} WHERE category = ? AND page_url NOT IN ({', '.join(['?'] * len(item_urls))})",
+            f"DELETE FROM {database.RawSiteData.table_name} WHERE category = ? AND page_url NOT IN ({', '.join(['?'] * len(item_urls))})",
             (category, *item_urls),
         )
 
         for item_url in item_urls:
             cursor.execute(
-                f"INSERT OR IGNORE INTO {models.RawSiteData.table_name} (page_url, category) VALUES (?, ?)",
+                f"INSERT OR IGNORE INTO {database.RawSiteData.table_name} (page_url, category) VALUES (?, ?)",
                 (item_url, category),
             )
 
@@ -139,14 +139,14 @@ def get_all_item_urls(**options) -> list[tuple[str, str]]:
     return sorted(
         [
             (url, category)
-            for category in models.CATEGORIES[-3:]
+            for category in database.CATEGORIES[-3:]
             for url in get_all_category_item_urls(category, **options)
         ]
     )
 
 
 def get_item_page_source_cached(url: str) -> str | None:
-    cache = models.RawSiteData.find_by(page_url=url)
+    cache = database.RawSiteData.find_by(page_url=url)
     if cache:
         return cache.page_source
 
@@ -170,8 +170,8 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
 
     page_source = driver().page_source
 
-    with models.cursor():
-        record = models.RawSiteData.find_by(page_url=url)
+    with database.cursor():
+        record = database.RawSiteData.find_by(page_url=url)
         if record and record.page_source != page_source:
             record.update(page_source=page_source)
 

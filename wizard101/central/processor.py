@@ -4,7 +4,7 @@ import traceback
 
 from bs4 import BeautifulSoup, Tag
 
-from . import models
+from . import database
 
 
 class Failed(Exception):
@@ -36,13 +36,13 @@ def identify_image_modifier(element: Tag) -> tuple[str | None, str | None]:
         assert isinstance(alt, str)
 
         if "icon" in alt.lower():
-            match = re.search(rf"\b{'|'.join(models.SCHOOLS)}|global\b", alt, re.IGNORECASE)
+            match = re.search(rf"\b{'|'.join(database.SCHOOLS)}|global\b", alt, re.IGNORECASE)
             if match is not None:
                 return "school_lock", match.group(0).lower()
 
-            match = re.search(rf"\b{'|'.join(models.CATEGORIES_IGNORE_PLURALITY)}\b", alt, re.IGNORECASE)
-            if match is not None and match.group(0).lower() in models.CATEGORY_LOOKUP:
-                return "category", models.CATEGORY_LOOKUP[match.group(0).lower()]
+            match = re.search(rf"\b{'|'.join(database.CATEGORIES_IGNORE_PLURALITY)}\b", alt, re.IGNORECASE)
+            if match is not None and match.group(0).lower() in database.CATEGORY_LOOKUP:
+                return "category", database.CATEGORY_LOOKUP[match.group(0).lower()]
 
     return None, None
 
@@ -79,9 +79,9 @@ def parse_site_data(url: str, category: str, page_source: str) -> tuple[str, str
 
 
 def main():
-    raw_site_data = models.database.execute(
-        f"SELECT url, category, page_source FROM raw_site_data WHERE category IN ({','.join('?'*len(models.WearableItem.CATEGORIES))})",
-        models.WearableItem.CATEGORIES,
+    raw_site_data = database.database.execute(
+        f"SELECT url, category, page_source FROM raw_site_data WHERE category IN ({','.join('?'*len(database.WearableItem.CATEGORIES))})",
+        database.WearableItem.CATEGORIES,
     )
 
     with ProcessPoolExecutor(max_workers=12) as executor:
