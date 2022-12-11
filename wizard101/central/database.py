@@ -45,6 +45,21 @@ class DatabaseColumns:
                 nullable=self.nullable,
             )
 
+        def to_python(self, database_value: Any) -> Any:
+            python_type, optional = self.extract_optional(self.python_type)
+            if optional and database_value is None:
+                return None
+            return python_type(database_value)
+
+        def to_database(self, python_value: Any) -> Any:
+            python_type, optional = self.extract_optional(self.python_type)
+            if python_type == bool:
+                if optional and python_value is None:
+                    return None
+                return int(python_value)
+
+            return python_value
+
         @staticmethod
         def extract_optional(annotation: Type[Any]) -> tuple[Type[Any], bool]:
             origin, args = get_origin(annotation), list(get_args(annotation))
@@ -71,7 +86,7 @@ class DatabaseColumns:
         def get_database_type(cls, python_type: Type[Any]) -> str | None:
             t, optional = cls.extract_optional(python_type)
 
-            database_types: dict[type, str] = {int: "INTEGER", float: "REAL", str: "TEXT"}
+            database_types: dict[type, str] = {int: "INTEGER", float: "REAL", str: "TEXT", bool: "INTEGER"}
             return database_types.get(t)
 
         @classmethod
@@ -98,7 +113,9 @@ class DatabaseColumns:
         database_type = DatabaseColumns.Column.get_database_type(python_type)
         nullable = DatabaseColumns.Column.get_nullability(python_type)
         if not database_type:
-            raise TypeError(f"Field `{name}` of must be an int, str, or float, but got `{python_type!r}` instead.")
+            raise TypeError(
+                f"Field `{name}` of must be an int, str, bool, or float, but got `{python_type!r}` instead."
+            )
 
         column = DatabaseColumns.Column(
             name=name, python_type=python_type, database_type=database_type, nullable=nullable
@@ -154,7 +171,7 @@ class DatabasePersistable:
         args = {}
         for col in cls._columns.direct:
             value = values.pop(0)
-            args[col.name] = value
+            args[col.name] = col.to_python(value)
 
         for name, ref in cls._columns.references.items():
             args[name] = ref.build(*values[: len(ref._columns.all)])
@@ -272,7 +289,7 @@ class DatabasePersistable:
 
     def get_ordered_column_values(self) -> list[Any]:
         cls = self.__class__
-        return [getattr(self, col.name) for col in cls._columns.direct] + [
+        return [col.to_database(getattr(self, col.name)) for col in cls._columns.direct] + [
             value
             for ref_name in cls._columns.references.keys()
             for value in getattr(self, ref_name).get_ordered_column_values()
@@ -293,6 +310,17 @@ class DatabasePersistable:
         _active_cursors[-1].execute(f"DELETE FROM {cls.table_name} WHERE {cls.pk} = ?", (getattr(self, cls.pk),))
 
 
+def truthy_repr(cls):
+    def __repr__(self) -> str:
+        return f"{cls.__name__}({', '.join(f'{attr}={value!r}' for attr, value in self.__dict__.items() if value)})"
+
+    cls.__repr__ = __repr__
+    cls.__str__ = __repr__
+
+    return cls
+
+
+@truthy_repr
 @dataclass
 class SchoolBasedStat(DatabasePersistable):
     universal: float = 0.0
@@ -311,16 +339,20 @@ class SchoolBasedStat(DatabasePersistable):
     moon: float = 0.0
     star: float = 0.0
 
-    def total(self, school: str | None) -> float:
+    def total(self, school: str | None = None) -> float:
         x = self.universal
 
         for k, v in self.__dict__.items():
-            if k == school:
+            if k == school or school is None:
                 x += v
 
         return x
 
+    def __bool__(self) -> bool:
+        return self.total() != 0.0
 
+
+@truthy_repr
 @dataclass
 class Stats(DatabasePersistable):
     damage_percent: SchoolBasedStat = field(default_factory=SchoolBasedStat)
@@ -341,59 +373,78 @@ class Stats(DatabasePersistable):
     accuracy_percent: SchoolBasedStat = field(default_factory=SchoolBasedStat)
 
     health: float = 0.0
+    incoming_healing_percent: float = 0.0
+    outgoing_healing_percent: float = 0.0
+
     mana: float = 0.0
 
+    def __bool__(self) -> bool:
+        return any(self.__dict__.values())
 
+
+@truthy_repr
 @dataclass
 class RawSiteData(DatabasePersistable):
     page_url: str = ""
 
-    category: str = "N/A"
+    category: str = ""
     page_source: str | None = None
 
 
+@truthy_repr
 @dataclass
 class WearableItem(DatabasePersistable):
     CATEGORIES: ClassVar[tuple[str]] = tuple({*CATEGORIES} - {"jewels", "talents"})
 
     page_url: str = ""
 
-    name: str = "N/A"
-    category: str = "N/A"
+    name: str = ""
+    category: str = ""
+
+    school_lock: str | None = None
+    level_requirement: int | None = None
+    auctionable: bool = True
+    tradeable: bool = True
+
     stats: Stats = field(default_factory=Stats)
 
 
+@truthy_repr
 @dataclass
 class PetAbility(DatabasePersistable):
     page_url: str = ""
 
-    name: str = "N/A"
+    name: str = ""
     stats: Stats = field(default_factory=Stats)
 
 
+@truthy_repr
 @dataclass
 class Jewel(DatabasePersistable):
     page_url: str = ""
 
-    name: str = "N/A"
-    shape: str = "N/A"
+    name: str = ""
+    shape: str = ""
     stats: Stats = field(default_factory=Stats)
     pet_ability_page_url: str | None = None
 
 
 connection = util.database_resource("central.sqlite")
-connection.executescript(
+connection.executescript(  # for now, dropping derivative tables on every run
     f"""
     {RawSiteData.get_table_structure()};
     CREATE INDEX IF NOT EXISTS {RawSiteData.table_name}_category_index ON {RawSiteData.table_name} (category);
     
+    DROP TABLE IF EXISTS {WearableItem.table_name};
     {WearableItem.get_table_structure()};
     CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_category_index ON {WearableItem.table_name} (category);
     CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_name_index ON {WearableItem.table_name} (name);
     
+    DROP TABLE IF EXISTS {PetAbility.table_name};
     {PetAbility.get_table_structure()};
     CREATE INDEX IF NOT EXISTS {PetAbility.table_name}_name_index ON {PetAbility.table_name} (name);
     
+    DROP TABLE IF EXISTS {Jewel.table_name};
     {Jewel.get_table_structure()};
     CREATE INDEX IF NOT EXISTS {Jewel.table_name}_name_index ON {Jewel.table_name} (name);
     CREATE INDEX IF NOT EXISTS {Jewel.table_name}_shape_index ON {Jewel.table_name} (shape);
