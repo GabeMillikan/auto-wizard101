@@ -17,7 +17,6 @@ from typing import (
     get_origin,
     get_args,
     get_type_hints,
-    Optional,
     Union,
     TypeVar,
     Generator,
@@ -26,35 +25,7 @@ from typing import (
 from types import UnionType
 
 from .. import util
-
-CATEGORIES = (
-    "hats",
-    "robes",
-    "boots",
-    "athames",
-    "amulets",
-    "rings",
-    "decks",
-    "mounts",
-    "jewels",
-    "talents",
-)
-CATEGORIES_SINGULAR = (
-    "hat",
-    "robe",
-    "boot",
-    "athame",
-    "amulet",
-    "ring",
-    "deck",
-    "mount",
-    "jewel",
-    "talents",
-)
-CATEGORIES_IGNORE_PLURALITY = CATEGORIES + CATEGORIES_SINGULAR
-CATEGORY_LOOKUP: dict[str, str] = dict(zip(CATEGORIES_IGNORE_PLURALITY, CATEGORIES * 2))
-
-SCHOOLS = "fire", "storm", "ice", "myth", "death", "life", "balance", "sun", "star", "moon"
+from .constants import *
 
 
 @dataclass
@@ -381,43 +352,37 @@ class Jewel(DatabasePersistable):
     pet_ability_page_url: str | None = None
 
 
-def initialize_database():
-    global database
-    database = util.database_resource("central.sqlite")
-    database.executescript(
-        f"""
-        {RawSiteData.get_table_structure()};
-        CREATE INDEX IF NOT EXISTS {RawSiteData.table_name}_category_index ON {RawSiteData.table_name} (category);
-        
-        {WearableItem.get_table_structure()};
-        CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_category_index ON {WearableItem.table_name} (category);
-        CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_name_index ON {WearableItem.table_name} (name);
-        
-        {PetAbility.get_table_structure()};
-        CREATE INDEX IF NOT EXISTS {PetAbility.table_name}_name_index ON {PetAbility.table_name} (name);
-        
-        {Jewel.get_table_structure()};
-        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_name_index ON {Jewel.table_name} (name);
-        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_shape_index ON {Jewel.table_name} (shape);
-        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_pet_ability_page_url_index ON {Jewel.table_name} (pet_ability_page_url);
-        """
-    )
-    database.commit()
+connection = util.database_resource("central.sqlite")
+connection.executescript(
+    f"""
+    {RawSiteData.get_table_structure()};
+    CREATE INDEX IF NOT EXISTS {RawSiteData.table_name}_category_index ON {RawSiteData.table_name} (category);
+    
+    {WearableItem.get_table_structure()};
+    CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_category_index ON {WearableItem.table_name} (category);
+    CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_name_index ON {WearableItem.table_name} (name);
+    
+    {PetAbility.get_table_structure()};
+    CREATE INDEX IF NOT EXISTS {PetAbility.table_name}_name_index ON {PetAbility.table_name} (name);
+    
+    {Jewel.get_table_structure()};
+    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_name_index ON {Jewel.table_name} (name);
+    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_shape_index ON {Jewel.table_name} (shape);
+    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_pet_ability_page_url_index ON {Jewel.table_name} (pet_ability_page_url);
+    """
+)
+connection.commit()
 
 
-initialize_database()
-
-_active_cursors = [database.cursor()]
+_active_cursors = [connection.cursor()]
 
 
 @contextmanager
 def cursor(commit=True):
-    global _active_cursors
-
-    cur = database.cursor()
+    cur = connection.cursor()
     _active_cursors.append(cur)
     yield cur
     _active_cursors.pop()
 
     if commit:
-        database.commit()
+        connection.commit()

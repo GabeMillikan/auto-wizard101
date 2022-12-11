@@ -4,7 +4,8 @@ import traceback
 
 from bs4 import BeautifulSoup, Tag
 
-from . import database
+from . import database as db
+from .constants import *
 
 
 class Failed(Exception):
@@ -36,19 +37,21 @@ def identify_image_modifier(element: Tag) -> tuple[str | None, str | None]:
         assert isinstance(alt, str)
 
         if "icon" in alt.lower():
-            match = re.search(rf"\b{'|'.join(database.SCHOOLS)}|global\b", alt, re.IGNORECASE)
+            match = re.search(rf"\b{'|'.join(SCHOOLS)}|global\b", alt, re.IGNORECASE)
             if match is not None:
                 return "school_lock", match.group(0).lower()
 
-            match = re.search(rf"\b{'|'.join(database.CATEGORIES_IGNORE_PLURALITY)}\b", alt, re.IGNORECASE)
-            if match is not None and match.group(0).lower() in database.CATEGORY_LOOKUP:
-                return "category", database.CATEGORY_LOOKUP[match.group(0).lower()]
+            match = re.search(rf"\b{'|'.join(db.CATEGORIES_IGNORE_PLURALITY)}\b", alt, re.IGNORECASE)
+            if match is not None and match.group(0).lower() in CATEGORY_LOOKUP:
+                return "category", CATEGORY_LOOKUP[match.group(0).lower()]
 
     return None, None
 
 
-def parse_site_data(url: str, category: str, page_source: str) -> tuple[str, str | None]:
-    soup = BeautifulSoup(page_source, "html.parser")
+def parse_site_data(site_data: db.RawSiteData) -> tuple[str, str | None]:
+    assert site_data.page_source is not None, "bruh how am i supposed to parse this -_-"
+
+    soup = BeautifulSoup(site_data.page_source, "html.parser")
 
     item_info_sections = soup.select(
         "#mw-content-text > table#ItemInfobox-Display-Table > tbody > tr:nth-child(1) > td > table > tbody > tr > td"
@@ -70,35 +73,29 @@ def parse_site_data(url: str, category: str, page_source: str) -> tuple[str, str
                     if t == "school_lock":
                         school_lock = p
                     elif t == "category":
-                        if p != category:
-                            raise Failed(f"expected to find category {category!r} but actually found {p!r}")
+                        if p != site_data.category:
+                            raise Failed(f"expected to find category {site_data.category!r} but actually found {p!r}")
                     else:
-                        raise Failed(f"Couldn't parse modifier image: {modifier!r}", url)
+                        raise Failed(f"Couldn't parse modifier image: {modifier!r} {site_data!r}")
 
-    return category, school_lock
+    return site_data.category, school_lock
 
 
 def main():
-    raw_site_data = database.database.execute(
-        f"SELECT url, category, page_source FROM raw_site_data WHERE category IN ({','.join('?'*len(database.WearableItem.CATEGORIES))})",
-        database.WearableItem.CATEGORIES,
-    )
+    raw_site_data = db.RawSiteData.where(category__in=db.WearableItem.CATEGORIES)
 
     with ProcessPoolExecutor(max_workers=12) as executor:
-        futures: dict[Future[tuple[str, str | None]], tuple[str, str, str]] = {}
+        futures: dict[Future[tuple[str, str | None]], db.RawSiteData] = {}
         for site_data in raw_site_data:
-            if site_data[0] != "https://www.wizard101central.com/wiki/Item:Dragoon%27s_Fiery_Helm":
-                pass  # continue
-            futures[executor.submit(parse_site_data, *site_data)] = site_data
-            # break
+            futures[executor.submit(parse_site_data, site_data)] = site_data
 
         for future in as_completed(list(futures.keys())):
-            url, category, page_source = futures.pop(future)
+            site_data = futures.pop(future)
             try:
                 _category, school_lock = future.result()
-                print(f"[{len(futures)} - {url}]: {school_lock}")
+                print(f"[{len(futures)} - {site_data.page_url}]: {school_lock}")
             except Exception as e:
-                print("ERROR WITHIN URL:", url)
+                print("ERROR WITHIN URL:", site_data.page_url)
                 traceback.print_exception(e)
             except:
                 executor.shutdown(wait=False, cancel_futures=True)
