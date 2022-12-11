@@ -193,33 +193,62 @@ class DatabasePersistable:
         )
 
     @classmethod
-    def where(
-        cls: Type[InheritsDatabasePersistable], _limit: int | None = None, _offset: int | None = None, **columns
-    ) -> Generator[InheritsDatabasePersistable, None, None]:
-        valid_column_names = set(col.name for col in cls._columns.all)
-        unknown_columns = columns.keys() - valid_column_names
+    def parse_sql_condition(cls, attribute: str, value: Any) -> tuple[str, list[Any]]:
+        column = attribute
+        parameters = [value]
+        condition = f"{column} = ?"
 
-        assert not unknown_columns, f"Unknown column names: {tuple(unknown_columns)!r}"
+        if "__" in attribute:
+            *column, modifier = attribute.split("__")
+            column = "__".join(column)
+
+            match modifier:
+                case "not":
+                    condition = f"{column} != ?"
+                case "in":
+                    assert isinstance(value, Iterable), "You can't use `__in` without an iterable."
+                    value = list(value)
+                    condition = f"{column} IN ({','.join('?' * len(value))})"
+                    parameters = value
+                case "not_in":
+                    assert isinstance(value, Iterable), "You can't use `__not_in` without an iterable."
+                    value = list(value)
+                    condition = f"{column} NOT IN ({','.join('?' * len(value))})"
+                    parameters = value
+                case _:
+                    raise ValueError(f"Unknown modifier {f'__{modifier}'!r}")
+
+        if column not in (col.name for col in cls._columns.all):
+            raise ValueError(f"Unknown column {column!r}")
+
+        return condition, parameters
+
+    @classmethod
+    def where(
+        cls: Type[InheritsDatabasePersistable], _limit: int | None = None, _offset: int | None = None, **attributes
+    ) -> Generator[InheritsDatabasePersistable, None, None]:
+        conditions = []
+        parameters = []
+        for attribute, value in attributes.items():
+            condition, parameter = cls.parse_sql_condition(attribute, value)
+            conditions.append(condition)
+            parameters.extend(parameter)
 
         return cls.where_sql(
-            " AND ".join(f'"{name}" = ?' for name in columns.keys()).strip() or "TRUE",
-            columns.values(),
+            " AND ".join(conditions).strip() or "TRUE",
+            parameters,
             limit=_limit,
             offset=_offset,
         )
 
     @classmethod
-    def find_by(cls: Type[InheritsDatabasePersistable], **columns) -> InheritsDatabasePersistable | None:
-        for record in cls.where_sql(
-            " AND ".join(f'"{name}" = ?' for name in columns.keys()).strip() or "TRUE",
-            columns.values(),
-            limit=1,
-        ):
+    def find_by(cls: Type[InheritsDatabasePersistable], **attributes) -> InheritsDatabasePersistable | None:
+        for record in cls.where(_limit=1, **attributes):
             return record
 
     @classmethod
-    def find(cls: Type[InheritsDatabasePersistable], **columns) -> InheritsDatabasePersistable:
-        record = cls.find_by(**columns)
+    def find(cls: Type[InheritsDatabasePersistable], **attributes) -> InheritsDatabasePersistable:
+        record = cls.find_by(**attributes)
         if record is None:
             raise LookupError("Could not find the specified record.")
 
