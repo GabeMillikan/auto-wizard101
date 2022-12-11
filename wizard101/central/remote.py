@@ -72,8 +72,7 @@ def get_single_category_page(url: str) -> tuple[list[str], int, str | None]:
 
 
 def get_all_category_item_urls_cached(category: str) -> list[str]:
-    cursor = models.database.execute("SELECT url FROM raw_item_data WHERE category = ?", (category,))
-    return [url for url, in cursor.fetchall()]
+    return [data.page_url for data in models.RawSiteData.where(category=category)]
 
 
 def get_all_category_item_urls(
@@ -88,7 +87,7 @@ def get_all_category_item_urls(
         return cached_item_urls
 
     item_urls = []
-    url = f"{API_ROOT}/wiki/Category:{category}"
+    url = f"{API_ROOT}/wiki/Category:{category.title()}"
 
     if print_progress:
         print(f"Fetching item urls for {category!r}...")
@@ -118,17 +117,17 @@ def get_all_category_item_urls(
         if print_progress:
             print(f"Fetched {len(item_urls)} / {total_items_in_category} {duplicates}".strip())
 
-    cursor = models.database.cursor()
+    with models.cursor() as cursor:
+        cursor.execute(
+            f"DELETE FROM {models.RawSiteData.table_name} WHERE category = ? AND page_url NOT IN ({', '.join(['?'] * len(item_urls))})",
+            (category, *item_urls),
+        )
 
-    cursor.execute(
-        f"DELETE FROM raw_item_data WHERE category = ? AND url NOT IN ({', '.join(['?'] * len(item_urls))})",
-        (category, *item_urls),
-    )
-
-    for item_url in item_urls:
-        cursor.execute("INSERT OR IGNORE INTO raw_item_data (url, category) VALUES (?, ?)", (item_url, category))
-
-    models.database.commit()
+        for item_url in item_urls:
+            cursor.execute(
+                f"INSERT OR IGNORE INTO {models.RawSiteData.table_name} (page_url, category) VALUES (?, ?)",
+                (item_url, category),
+            )
 
     if print_progress:
         print(f"Cached {len(item_urls)} urls for later reuse")
@@ -140,18 +139,16 @@ def get_all_item_urls(**options) -> list[tuple[str, str]]:
     return sorted(
         [
             (url, category)
-            for category in models.Item.CATEGORIES
+            for category in models.CATEGORIES[-3:]
             for url in get_all_category_item_urls(category, **options)
         ]
     )
 
 
 def get_item_page_source_cached(url: str) -> str | None:
-    cursor = models.database.execute("SELECT page_source FROM raw_item_data WHERE url = ?", (url,))
-    row = cursor.fetchone()
-    if row:
-        (page_source,) = row
-        return page_source
+    cache = models.RawSiteData.find_by(page_url=url)
+    if cache:
+        return cache.page_source
 
     return None
 
@@ -173,8 +170,10 @@ def get_item_page_source(url: str, use_cache: bool | None = None, load_timeout: 
 
     page_source = driver().page_source
 
-    models.database.execute("UPDATE raw_item_data SET page_source = ? WHERE url = ?", (page_source, url))
-    models.database.commit()
+    with models.cursor():
+        record = models.RawSiteData.find_by(page_url=url)
+        if record and record.page_source != page_source:
+            record.update(page_source=page_source)
 
     return page_source
 
