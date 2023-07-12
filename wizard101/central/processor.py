@@ -1,9 +1,9 @@
-from concurrent.futures import ProcessPoolExecutor, Future, as_completed
 import re
 import traceback
-from typing import TypeVar, Optional
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from typing import Optional, TypeVar
 
-from bs4 import BeautifulSoup, Tag, NavigableString
+from bs4 import BeautifulSoup, NavigableString, Tag
 from fuzzywuzzy import fuzz
 
 from . import database as db
@@ -31,7 +31,7 @@ def identify_stats_section(previous_sections: list[str], element: Tag) -> tuple[
 
     if len(children) == 1:
         text = element.text.lower()
-        if fuzz.ratio("level required level", text) > 75:
+        if "level required" in text:  # also sometimes includes a pvp rank requirement but who cares
             return "level_requirement", children
         elif fuzz.ratio("bonuses", text) > 75:
             return "bonuses_label", children
@@ -180,8 +180,10 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
             case "bonuses_label":
                 pass
             case "bonuses":
+                next_element_is_sockets = False
                 for element in elements:
                     children: list[Tag] = element.find_all(recursive=False)
+                    text = re.sub(r"\s+", " ", element.text.lower()).strip()
 
                     # stats
                     if all(child.name == "dd" for child in children) and len(children) > 3:
@@ -189,7 +191,10 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                             text = re.sub(r"\s+", " ", child.text.lower()).strip()
                             children = child.find_all(recursive=False)
                             images: list[Tag] = child.find_all("img")
-                            image_alts = [str(img["alt"]).lower() for img in images]
+                            image_alts = [
+                                re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]", " ", str(img["alt"]).lower())).strip()
+                                for img in images
+                            ]
                             school_alts = []
                             non_school_alts = []
 
@@ -207,6 +212,19 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                                 )
                                 continue
 
+                            # energy
+                            if len(image_alts) == 1 and "energy" in image_alts[0]:
+                                # TODO: energy
+                                # wearable.stats.energy = int(
+                                #     must(re.search(r"\+\s*(\d+)\s*max", text.replace(",", ""))).group(1)
+                                # )
+                                continue
+
+                            # mana
+                            if len(image_alts) == 1 and "mana" in image_alts[0]:
+                                # TODO: mana
+                                continue
+
                             # healing outgoing/incoming percent
                             if (
                                 len(non_school_alts) == 2
@@ -214,9 +232,24 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                                 and ("incoming" in non_school_alts[0] or "outgoing" in non_school_alts[0])
                             ):
                                 direction = "incoming" if "incoming" in non_school_alts[0] else "outgoing"
-                                number = float(must(re.search(r"\+\s*(\d+)\s*%", text.replace(",", ""))).group(1))
+                                number = float(must(re.search(r"\+\s*(\d+)\s*%?", text.replace(",", ""))).group(1))
 
                                 setattr(wearable.stats, f"{direction}_healing_percent", number)
+                                continue
+
+                            # fishing luck
+                            if len(image_alts) == 1 and "fishing luck" in image_alts[0]:
+                                # TODO: fishing luck
+                                # wearable.stats.fishing_luck = int(
+                                #     must(re.search(r"\+\s*(\d+)", text.replace(",", ""))).group(1)
+                                # )
+                                continue
+
+                            # power pip
+                            if len(image_alts) == 1 and "power pip" in image_alts[0]:
+                                wearable.stats.power_pip_percent = int(
+                                    must(re.search(r"\+\s*(\d+)", text.replace(",", ""))).group(1)
+                                )
                                 continue
 
                             # shadow pip
@@ -265,6 +298,13 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                                     setattr(wearable.stats.damage_percent, school, value)
                                 continue
 
+                            # damage flat
+                            if len(non_school_alts) == 1 and "flat damage" in non_school_alts[0]:
+                                contents: list[Tag | NavigableString] = child.contents  # type: ignore
+                                for school, value in parse_numeric_school_based_stat_row(contents, "damage").items():
+                                    setattr(wearable.stats.damage_flat, school, value)
+                                continue
+
                             # resistance
                             if len(non_school_alts) == 1 and "resistance" in non_school_alts[0]:
                                 contents: list[Tag | NavigableString] = child.contents  # type: ignore
@@ -274,6 +314,11 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                                     setattr(wearable.stats.resist_percent, school, value)
                                 continue
 
+                            # item card
+                            if "item card" in child.text.lower():
+                                # TODO: item cards
+                                continue
+
                             # empty
                             if not text and not re.search(r"\w{5,}", repr(child)):
                                 continue
@@ -281,16 +326,32 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
                             raise Failed(f"Unknown bonuses section has content: {child!r}")
                         continue
 
+                    # "Sockets" Label
+                    if text == "sockets":
+                        # the next element will contain sockets/pins
+                        next_element_is_sockets = True
+                        continue
+
+                    # sockets
+                    if next_element_is_sockets:
+                        # TODO: PINS/SOCKETS
+                        continue
+
                     # tradeable/auctionable
-                    text = re.sub(r"\s+", " ", element.text.lower()).strip()
-                    if text == "not tradeable":
+                    if text == "not tradeable" or text == "no trade" or text == "unknown trade status":
                         wearable.tradeable = False
                         continue
                     elif text == "tradeable":
                         wearable.tradeable = True
                         continue
-                    elif text == "no auction":
+                    elif text == "no auction" or text == "unknown auction status":
                         wearable.auctionable = False
+                        continue
+                    elif text == "auctionable":
+                        wearable.auctionable = True
+                        continue
+                    elif text == "no sell":
+                        # TODO: sellable?
                         continue
 
                     # empty
@@ -301,7 +362,8 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
             case "sockets_label":
                 pass
             case "sockets":
-                print(elements)
+                # TODO: SOCKETS
+                pass
             case _:
                 raise Failed(f"Unknown Stats Section! {t!r} {stats_section}")
 
@@ -313,13 +375,14 @@ def parse_wearable(site_data: db.RawSiteData) -> ParsingResult:
 
 def main():
     # raw_site_data = db.RawSiteData.where(category__in=set(db.WearableItem.CATEGORIES) - {"mounts"}, _limit=256)
-    raw_site_data = db.RawSiteData.where(category="robes", _limit=100)
-
+    raw_site_data = db.RawSiteData.where(category="robes")
     with ProcessPoolExecutor(max_workers=12) as executor:
         futures: dict[Future[ParsingResult], db.RawSiteData] = {}
-        for site_data in raw_site_data:
+
+        for i, site_data in enumerate(raw_site_data):
             if site_data.category in db.WearableItem.CATEGORIES:
                 futures[executor.submit(parse_wearable, site_data)] = site_data
+                print("submitted future", i + 1)
 
         x = list(futures.keys())
         for future in as_completed(x):

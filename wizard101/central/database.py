@@ -430,28 +430,29 @@ class Jewel(DatabasePersistable):
 
 
 connection = util.database_resource("central.sqlite")
-connection.executescript(  # for now, dropping derivative tables on every run
-    f"""
-    {RawSiteData.get_table_structure()};
-    CREATE INDEX IF NOT EXISTS {RawSiteData.table_name}_category_index ON {RawSiteData.table_name} (category);
-    
-    DROP TABLE IF EXISTS {WearableItem.table_name};
-    {WearableItem.get_table_structure()};
-    CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_category_index ON {WearableItem.table_name} (category);
-    CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_name_index ON {WearableItem.table_name} (name);
-    
-    DROP TABLE IF EXISTS {PetAbility.table_name};
-    {PetAbility.get_table_structure()};
-    CREATE INDEX IF NOT EXISTS {PetAbility.table_name}_name_index ON {PetAbility.table_name} (name);
-    
-    DROP TABLE IF EXISTS {Jewel.table_name};
-    {Jewel.get_table_structure()};
-    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_name_index ON {Jewel.table_name} (name);
-    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_shape_index ON {Jewel.table_name} (shape);
-    CREATE INDEX IF NOT EXISTS {Jewel.table_name}_pet_ability_page_url_index ON {Jewel.table_name} (pet_ability_page_url);
-    """
-)
-connection.commit()
+if __name__ == "__main__":
+    connection.executescript(  # for now, dropping derivative tables on every run
+        f"""
+        {RawSiteData.get_table_structure()};
+        CREATE INDEX IF NOT EXISTS {RawSiteData.table_name}_category_index ON {RawSiteData.table_name} (category);
+        
+        DROP TABLE IF EXISTS {WearableItem.table_name};
+        {WearableItem.get_table_structure()};
+        CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_category_index ON {WearableItem.table_name} (category);
+        CREATE INDEX IF NOT EXISTS {WearableItem.table_name}_name_index ON {WearableItem.table_name} (name);
+        
+        DROP TABLE IF EXISTS {PetAbility.table_name};
+        {PetAbility.get_table_structure()};
+        CREATE INDEX IF NOT EXISTS {PetAbility.table_name}_name_index ON {PetAbility.table_name} (name);
+        
+        DROP TABLE IF EXISTS {Jewel.table_name};
+        {Jewel.get_table_structure()};
+        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_name_index ON {Jewel.table_name} (name);
+        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_shape_index ON {Jewel.table_name} (shape);
+        CREATE INDEX IF NOT EXISTS {Jewel.table_name}_pet_ability_page_url_index ON {Jewel.table_name} (pet_ability_page_url);
+        """
+    )
+    connection.commit()
 
 
 _active_cursors = [connection.cursor()]
