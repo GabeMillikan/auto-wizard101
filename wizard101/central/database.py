@@ -7,22 +7,22 @@ I slowly added features to this file and eventually ended up with a copy of SQLA
 but I am now too lazy to refactor it to _actually_ use SQLAlchemy. Oh well.
 """
 
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import re
+from types import UnionType
 from typing import (
-    Type,
     Any,
     ClassVar,
-    get_origin,
-    get_args,
-    get_type_hints,
-    Union,
-    TypeVar,
     Generator,
     Iterable,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
 )
-from types import UnionType
 
 from .. import util
 from .constants import *
